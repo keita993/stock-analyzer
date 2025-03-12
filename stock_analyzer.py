@@ -57,7 +57,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("株式の売買傾向分析アプリ")
+st.title("株式の売買傾向分析アプリ（SBI証券用）")
 
 # CSVファイルをアップロードまたは既存ファイルを使用
 st.sidebar.header("データ入力")
