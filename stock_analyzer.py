@@ -57,7 +57,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("株式取引と日経平均の比較分析")
+st.title("株式の売買傾向分析アプリ")
 
 # CSVファイルをアップロードまたは既存ファイルを使用
 st.sidebar.header("データ入力")
