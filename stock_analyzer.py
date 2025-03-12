@@ -7,7 +7,56 @@ import os
 import yfinance as yf
 
 # ページ設定
-st.set_page_config(page_title="株式取引分析アプリ", layout="wide")
+st.set_page_config(
+    page_title="株式取引分析アプリ", 
+    layout="wide",
+    initial_sidebar_state="collapsed"  # モバイル用にサイドバーを初期で折りたたむ
+)
+
+# スタイルシートを追加してモバイル表示を最適化
+st.markdown("""
+<style>
+    /* モバイル向け全体調整 */
+    @media (max-width: 640px) {
+        .main .block-container {
+            padding-top: 1rem;
+            padding-left: 0.5rem;
+            padding-right: 0.5rem;
+        }
+        
+        /* フォントサイズ調整 */
+        h1 {
+            font-size: 1.5rem !important;
+        }
+        h2 {
+            font-size: 1.3rem !important;
+        }
+        h3 {
+            font-size: 1.1rem !important;
+        }
+        p, li, div {
+            font-size: 0.9rem !important;
+        }
+        
+        /* テーブル幅調整 */
+        .stTable {
+            width: 100%;
+            font-size: 0.8rem !important;
+        }
+        
+        /* 進捗バー調整 */
+        .stProgress > div > div {
+            height: 1.5rem !important;
+        }
+    }
+    
+    /* タッチデバイス向けボタン調整 */
+    button {
+        min-height: 2.5rem !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("株式取引と日経平均の比較分析")
 
 # CSVファイルをアップロードまたは既存ファイルを使用
@@ -68,6 +117,28 @@ def load_data(file_path=None, uploaded_file=None, encoding='utf-8', sep=',', ski
     except Exception as e:
         st.error(f"データ読み込み中にエラーが発生しました: {str(e)}")
         return None
+
+# グローバル変数としてモバイル判定を追加
+is_mobile = False
+
+# モバイル向けにレイアウトを調整する関数
+def responsive_columns(spec):
+    """
+    スクリーン幅に基づいて列数を調整
+    スマホ画面なら1列、デスクトップなら指定列数
+    """
+    global is_mobile
+    try:
+        # JavaScriptを使ってスクリーン幅を取得
+        screen_width = st.session_state.get('screen_width', 1000)
+        is_mobile = screen_width < 640
+    except:
+        pass
+    
+    if is_mobile:
+        return st.columns([1])  # モバイルでは1列
+    else:
+        return st.columns(spec)  # デスクトップでは指定された列数
 
 if upload_option == "ファイルをアップロード":
     uploaded_file = st.sidebar.file_uploader("CSVファイルをアップロード", type=["csv"])
@@ -199,10 +270,13 @@ if data is not None:
                 secondary_y=True,
             )
             
-            # レイアウトを更新
+            # チャートをスマホ対応に調整
             fig.update_layout(
                 title_text="日経平均株価と売買代金の推移",
-                hovermode="x unified"
+                hovermode="x unified",
+                height=500,  # 高さを固定
+                margin=dict(l=10, r=10, t=50, b=30),  # マージンを小さく
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)  # 凡例を上部中央に
             )
             
             # X軸とY軸のタイトルを更新
@@ -211,7 +285,7 @@ if data is not None:
             fig.update_yaxes(title_text="売買代金（円）", secondary_y=True)
             
             # チャートを表示
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, height=500)
             
             # 統合された分析セクション
             st.subheader("取引タイミング分析")
@@ -226,7 +300,12 @@ if data is not None:
             sell_on_down = down_days['売り金額'].sum()
             
             # メトリクスと分析を並べて表示
-            col1, col2 = st.columns([1, 1])
+            try:
+                col1, col2 = responsive_columns([1, 1])
+            except:
+                # フォールバック - レスポンシブ機能が動作しない場合
+                cols = st.columns([1, 1])
+                col1, col2 = cols[0], cols[1]
             
             with col1:
                 st.markdown("### 市場状況別の取引額")
@@ -240,7 +319,18 @@ if data is not None:
                 
                 # データフレームを作成して表示
                 market_df = pd.DataFrame(market_data)
-                st.table(market_df)
+                
+                # モバイル向けにテーブル表示を簡略化
+                if is_mobile:
+                    # 表示する列を限定
+                    simple_df = market_df[["市場状況", "買い金額"]]
+                    st.dataframe(simple_df, height=200, use_container_width=True)
+                    
+                    simple_df = market_df[["市場状況", "売り金額"]]
+                    st.dataframe(simple_df, height=200, use_container_width=True)
+                else:
+                    # デスクトップ向けに全ての列を表示
+                    st.table(market_df)
                 
                 # 比率を計算
                 if buy_on_up + sell_on_up > 0:
@@ -347,3 +437,18 @@ pip install streamlit pandas numpy plotly yfinance
 streamlit run stock_analyzer.py
 ```
 """)
+
+# スクリーン幅を取得するためのJavaScript
+st.markdown("""
+<script>
+    // スクリーン幅をセッションステートに保存
+    const screenWidth = window.innerWidth;
+    const setWidth = () => {
+        window.parent.postMessage({
+            type: 'streamlit:setComponentValue',
+            value: screenWidth
+        }, '*');
+    }
+    window.addEventListener('load', setWidth);
+</script>
+""", unsafe_allow_html=True)
