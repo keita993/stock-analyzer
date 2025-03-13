@@ -299,6 +299,213 @@ if data is not None:
             buy_on_down = down_days['買い金額'].sum()
             sell_on_down = down_days['売り金額'].sum()
             
+            # 日経平均のトレンド分析を追加
+            st.subheader("日経平均トレンド分析と売買判定")
+            
+            # 移動平均線を計算
+            nikkei_ma_short = 5   # 短期移動平均線（5日）
+            nikkei_ma_medium = 25 # 中期移動平均線（25日）
+            nikkei_ma_long = 75   # 長期移動平均線（75日）
+            
+            # 日付順にソート
+            nikkei_sorted = nikkei.sort_index()
+            
+            # 移動平均線を計算
+            nikkei_sorted['MA_short'] = nikkei_sorted['Close'].rolling(window=nikkei_ma_short).mean()
+            nikkei_sorted['MA_medium'] = nikkei_sorted['Close'].rolling(window=nikkei_ma_medium).mean()
+            nikkei_sorted['MA_long'] = nikkei_sorted['Close'].rolling(window=nikkei_ma_long).mean()
+            
+            # トレンド判定
+            nikkei_sorted['上昇トレンド'] = (nikkei_sorted['MA_short'] > nikkei_sorted['MA_medium']) & (nikkei_sorted['MA_medium'] > nikkei_sorted['MA_long'])
+            nikkei_sorted['下落トレンド'] = (nikkei_sorted['MA_short'] < nikkei_sorted['MA_medium']) & (nikkei_sorted['MA_medium'] < nikkei_sorted['MA_long'])
+            
+            # トレンドに基づく売買シグナル
+            nikkei_sorted['買いシグナル'] = (nikkei_sorted['上昇トレンド'] != nikkei_sorted['上昇トレンド'].shift(1)) & nikkei_sorted['上昇トレンド']
+            nikkei_sorted['売りシグナル'] = (nikkei_sorted['下落トレンド'] != nikkei_sorted['下落トレンド'].shift(1)) & nikkei_sorted['下落トレンド']
+            
+            # トレンドグラフを作成
+            fig_trend = go.Figure()
+            
+            # 日経平均終値
+            fig_trend.add_trace(go.Scatter(
+                x=nikkei_sorted.index, 
+                y=nikkei_sorted['Close'],
+                mode='lines',
+                name='日経平均',
+                line=dict(color='blue', width=1)
+            ))
+            
+            # 短期移動平均線
+            fig_trend.add_trace(go.Scatter(
+                x=nikkei_sorted.index, 
+                y=nikkei_sorted['MA_short'],
+                mode='lines',
+                name=f'{nikkei_ma_short}日移動平均',
+                line=dict(color='green', width=1)
+            ))
+            
+            # 中期移動平均線
+            fig_trend.add_trace(go.Scatter(
+                x=nikkei_sorted.index, 
+                y=nikkei_sorted['MA_medium'],
+                mode='lines',
+                name=f'{nikkei_ma_medium}日移動平均',
+                line=dict(color='orange', width=1)
+            ))
+            
+            # 長期移動平均線
+            fig_trend.add_trace(go.Scatter(
+                x=nikkei_sorted.index, 
+                y=nikkei_sorted['MA_long'],
+                mode='lines',
+                name=f'{nikkei_ma_long}日移動平均',
+                line=dict(color='red', width=1)
+            ))
+            
+            # 買いシグナル
+            buy_signals = nikkei_sorted[nikkei_sorted['買いシグナル']]
+            if not buy_signals.empty:
+                fig_trend.add_trace(go.Scatter(
+                    x=buy_signals.index, 
+                    y=buy_signals['Close'],
+                    mode='markers',
+                    name='買いシグナル',
+                    marker=dict(symbol='triangle-up', size=12, color='green')
+                ))
+            
+            # 売りシグナル
+            sell_signals = nikkei_sorted[nikkei_sorted['売りシグナル']]
+            if not sell_signals.empty:
+                fig_trend.add_trace(go.Scatter(
+                    x=sell_signals.index, 
+                    y=sell_signals['Close'],
+                    mode='markers',
+                    name='売りシグナル',
+                    marker=dict(symbol='triangle-down', size=12, color='red')
+                ))
+            
+            # レイアウト設定
+            fig_trend.update_layout(
+                title='日経平均トレンド分析と売買シグナル',
+                xaxis_title='日付',
+                yaxis_title='価格',
+                height=500,
+                margin=dict(l=10, r=10, t=50, b=30),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+            
+            # グラフ表示
+            st.plotly_chart(fig_trend, use_container_width=True)
+            
+            # シグナルと実際の売買の一致度分析
+            st.subheader("売買シグナルと実際の取引一致度分析")
+            
+            # 分析のためのデータ準備
+            # 日次のシグナルを抽出
+            signal_df = nikkei_sorted[['買いシグナル', '売りシグナル']].reset_index()
+            signal_df.columns = ['日付', '買いシグナル', '売りシグナル']
+            
+            # 日付型を統一
+            signal_df['日付'] = pd.to_datetime(signal_df['日付'])
+            merged_df['日付'] = pd.to_datetime(merged_df['日付'])
+            
+            # シグナルと実際の取引を結合
+            analysis_df = pd.merge(merged_df, signal_df, on='日付', how='outer')
+            
+            # NaNを0に置換
+            analysis_df['買い金額'] = analysis_df['買い金額'].fillna(0)
+            analysis_df['売り金額'] = analysis_df['売り金額'].fillna(0)
+            analysis_df['買いシグナル'] = analysis_df['買いシグナル'].fillna(False)
+            analysis_df['売りシグナル'] = analysis_df['売りシグナル'].fillna(False)
+            
+            # シグナルに一致した取引の集計
+            matched_buys = analysis_df[analysis_df['買いシグナル']]['買い金額'].sum()
+            mismatched_buys = analysis_df[~analysis_df['買いシグナル']]['買い金額'].sum()
+            
+            matched_sells = analysis_df[analysis_df['売りシグナル']]['売り金額'].sum()
+            mismatched_sells = analysis_df[~analysis_df['売りシグナル']]['売り金額'].sum()
+            
+            # 一致率の計算
+            total_buys = matched_buys + mismatched_buys
+            total_sells = matched_sells + mismatched_sells
+            
+            buy_match_rate = (matched_buys / total_buys * 100) if total_buys > 0 else 0
+            sell_match_rate = (matched_sells / total_sells * 100) if total_sells > 0 else 0
+            overall_match_rate = ((matched_buys + matched_sells) / (total_buys + total_sells) * 100) if (total_buys + total_sells) > 0 else 0
+            
+            # 結果表示
+            col_signal1, col_signal2 = responsive_columns([1, 1])
+            
+            with col_signal1:
+                st.markdown("### シグナル一致率")
+                
+                # メトリクス表示
+                st.metric("買いシグナル一致率", f"{buy_match_rate:.1f}%", 
+                         delta=f"{buy_match_rate - 50:.1f}%" if buy_match_rate != 50 else "中立")
+                
+                st.metric("売りシグナル一致率", f"{sell_match_rate:.1f}%", 
+                         delta=f"{sell_match_rate - 50:.1f}%" if sell_match_rate != 50 else "中立")
+                
+                st.metric("総合シグナル一致率", f"{overall_match_rate:.1f}%", 
+                         delta=f"{overall_match_rate - 50:.1f}%" if overall_match_rate != 50 else "中立")
+                
+                # データ表示
+                signal_summary = pd.DataFrame({
+                    "項目": ["買いシグナルに一致", "買いシグナルに不一致", "売りシグナルに一致", "売りシグナルに不一致"],
+                    "金額": [
+                        f"{matched_buys:,.0f}円", 
+                        f"{mismatched_buys:,.0f}円", 
+                        f"{matched_sells:,.0f}円", 
+                        f"{mismatched_sells:,.0f}円"
+                    ]
+                })
+                
+                st.dataframe(signal_summary, use_container_width=True)
+            
+            with col_signal2:
+                st.markdown("### シグナル分析評価")
+                
+                # 買いシグナル評価
+                if buy_match_rate > 70:
+                    st.success("✅ **買いタイミング**: 優れています。トレンド転換点での買い判断が的確です。")
+                elif buy_match_rate > 50:
+                    st.info("ℹ️ **買いタイミング**: 良好です。トレンド判断に基づいた買い注文が多いですが、改善の余地があります。")
+                elif buy_match_rate > 30:
+                    st.warning("⚠️ **買いタイミング**: 要改善。トレンド転換を十分に捉えられていません。")
+                else:
+                    st.error("❌ **買いタイミング**: 不適切です。理想的な買いシグナルとは逆のタイミングで買っている可能性が高いです。")
+                
+                # 売りシグナル評価
+                if sell_match_rate > 70:
+                    st.success("✅ **売りタイミング**: 優れています。トレンド転換点での売り判断が的確です。")
+                elif sell_match_rate > 50:
+                    st.info("ℹ️ **売りタイミング**: 良好です。トレンド判断に基づいた売り注文が多いですが、改善の余地があります。")
+                elif sell_match_rate > 30:
+                    st.warning("⚠️ **売りタイミング**: 要改善。トレンド転換を十分に捉えられていません。")
+                else:
+                    st.error("❌ **売りタイミング**: 不適切です。理想的な売りシグナルとは逆のタイミングで売っている可能性が高いです。")
+                
+                # 総合評価
+                st.markdown("### 改善提案")
+                
+                if overall_match_rate < 50:
+                    st.markdown("""
+                    **トレンド分析に基づく改善点**:
+                    
+                    1. 短期・中期・長期の移動平均線の位置関係を確認し、トレンドの方向性を把握しましょう
+                    2. 上昇トレンド初期（短期線が中期線を上抜ける）で買い、下落トレンド初期（短期線が中期線を下抜ける）で売るルールを検討してください
+                    3. チャートパターンの学習: トレンド転換のサインを学んで、早めに判断する力を養いましょう
+                    4. 感情的な売買を避け、事前に決めたルールに従うディシプリンを強化しましょう
+                    """)
+                else:
+                    st.markdown("""
+                    **さらなる改善のためのヒント**:
+                    
+                    1. シグナル発生後のエントリータイミングを見直し、より有利な価格での取引を目指しましょう
+                    2. ポジションサイジング: トレンドの強さに応じて投資金額を調整することで、リターンを最適化できます
+                    3. 複数の時間軸でのトレンド確認: 日足だけでなく週足や月足のトレンドも確認し、より大きな流れに逆らわないようにしましょう
+                    """)
+
             # メトリクスと分析を並べて表示
             try:
                 col1, col2 = responsive_columns([1, 1])
