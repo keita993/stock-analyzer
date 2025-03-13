@@ -290,22 +290,13 @@ if data is not None:
             # 統合された分析セクション
             st.subheader("取引タイミング分析")
             
-            # 上昇日と下落日の買い売り
-            up_days = merged_df[merged_df['日経平均'].diff() > 0]
-            down_days = merged_df[merged_df['日経平均'].diff() < 0]
-            
-            buy_on_up = up_days['買い金額'].sum()
-            sell_on_up = up_days['売り金額'].sum()
-            buy_on_down = down_days['買い金額'].sum()
-            sell_on_down = down_days['売り金額'].sum()
-            
-            # 日経平均のトレンド分析を追加
+            # 日経平均のトレンド分析を修正
             st.subheader("日経平均トレンド分析と売買判定")
             
-            # 移動平均線を計算
+            # 移動平均線パラメータの修正
             nikkei_ma_short = 5   # 短期移動平均線（5日）
-            nikkei_ma_medium = 25 # 中期移動平均線（25日）
-            nikkei_ma_long = 75   # 長期移動平均線（75日）
+            nikkei_ma_medium = 20 # 中期移動平均線（20日）- より一般的な値に変更
+            nikkei_ma_long = 50   # 長期移動平均線（50日）- より一般的な値に変更
             
             # 日付順にソート
             nikkei_sorted = nikkei.sort_index()
@@ -315,13 +306,17 @@ if data is not None:
             nikkei_sorted['MA_medium'] = nikkei_sorted['Close'].rolling(window=nikkei_ma_medium).mean()
             nikkei_sorted['MA_long'] = nikkei_sorted['Close'].rolling(window=nikkei_ma_long).mean()
             
-            # トレンド判定
-            nikkei_sorted['上昇トレンド'] = (nikkei_sorted['MA_short'] > nikkei_sorted['MA_medium']) & (nikkei_sorted['MA_medium'] > nikkei_sorted['MA_long'])
-            nikkei_sorted['下落トレンド'] = (nikkei_sorted['MA_short'] < nikkei_sorted['MA_medium']) & (nikkei_sorted['MA_medium'] < nikkei_sorted['MA_long'])
+            # ゴールデンクロス・デッドクロスによるシグナル判定
+            nikkei_sorted['ゴールデンクロス'] = (nikkei_sorted['MA_short'] > nikkei_sorted['MA_medium']) & (nikkei_sorted['MA_short'].shift(1) <= nikkei_sorted['MA_medium'].shift(1))
+            nikkei_sorted['デッドクロス'] = (nikkei_sorted['MA_short'] < nikkei_sorted['MA_medium']) & (nikkei_sorted['MA_short'].shift(1) >= nikkei_sorted['MA_medium'].shift(1))
             
-            # トレンドに基づく売買シグナル
-            nikkei_sorted['買いシグナル'] = (nikkei_sorted['上昇トレンド'] != nikkei_sorted['上昇トレンド'].shift(1)) & nikkei_sorted['上昇トレンド']
-            nikkei_sorted['売りシグナル'] = (nikkei_sorted['下落トレンド'] != nikkei_sorted['下落トレンド'].shift(1)) & nikkei_sorted['下落トレンド']
+            # 買いシグナル・売りシグナルとして設定
+            nikkei_sorted['買いシグナル'] = nikkei_sorted['ゴールデンクロス']
+            nikkei_sorted['売りシグナル'] = nikkei_sorted['デッドクロス']
+            
+            # トレンド判定（より洗練された方法）
+            nikkei_sorted['上昇トレンド'] = nikkei_sorted['MA_short'] > nikkei_sorted['MA_medium']
+            nikkei_sorted['下落トレンド'] = nikkei_sorted['MA_short'] < nikkei_sorted['MA_medium']
             
             # トレンドグラフを作成
             fig_trend = go.Figure()
@@ -359,10 +354,10 @@ if data is not None:
                 y=nikkei_sorted['MA_long'],
                 mode='lines',
                 name=f'{nikkei_ma_long}日移動平均',
-                line=dict(color='red', width=1)
+                line=dict(color='red', width=1, dash='dot')
             ))
             
-            # 買いシグナル
+            # 買いシグナル（ゴールデンクロス）
             buy_signals = nikkei_sorted[nikkei_sorted['買いシグナル']]
             if not buy_signals.empty:
                 fig_trend.add_trace(go.Scatter(
@@ -373,7 +368,7 @@ if data is not None:
                     marker=dict(symbol='triangle-up', size=12, color='green')
                 ))
             
-            # 売りシグナル
+            # 売りシグナル（デッドクロス）
             sell_signals = nikkei_sorted[nikkei_sorted['売りシグナル']]
             if not sell_signals.empty:
                 fig_trend.add_trace(go.Scatter(
@@ -397,41 +392,45 @@ if data is not None:
             # グラフ表示
             st.plotly_chart(fig_trend, use_container_width=True)
             
-            # シグナルと実際の売買の一致度分析
+            # 一致度分析を改善 - 日付の前後数日も含めて一致とみなす
             st.subheader("売買シグナルと実際の取引一致度分析")
             
+            # シグナル日前後の日数（前後7日をシグナル有効期間とする）
+            signal_window = 7
+            
             # 分析のためのデータ準備
-            # 日次のシグナルを抽出
             signal_df = nikkei_sorted[['買いシグナル', '売りシグナル']].reset_index()
             signal_df.columns = ['日付', '買いシグナル', '売りシグナル']
             
+            # 各シグナル発生日の前後n日も有効期間とみなす
+            buy_signal_dates = signal_df[signal_df['買いシグナル']]['日付'].tolist()
+            sell_signal_dates = signal_df[signal_df['売りシグナル']]['日付'].tolist()
+            
+            # 有効期間のデータフレーム生成
+            valid_buy_dates = []
+            valid_sell_dates = []
+            
+            for date in buy_signal_dates:
+                # 前後n日を追加
+                for i in range(-signal_window, signal_window+1):
+                    valid_date = date + pd.Timedelta(days=i)
+                    valid_buy_dates.append(valid_date)
+            
+            for date in sell_signal_dates:
+                # 前後n日を追加
+                for i in range(-signal_window, signal_window+1):
+                    valid_date = date + pd.Timedelta(days=i)
+                    valid_sell_dates.append(valid_date)
+            
             # 日付型を統一
-            signal_df['日付'] = pd.to_datetime(signal_df['日付'])
             merged_df['日付'] = pd.to_datetime(merged_df['日付'])
             
-            # シグナルと実際の取引を結合
-            analysis_df = pd.merge(merged_df, signal_df, on='日付', how='outer')
+            # 拡張シグナル期間内の取引を集計
+            matched_buys = merged_df[merged_df['日付'].isin(valid_buy_dates)]['買い金額'].sum()
+            mismatched_buys = merged_df[~merged_df['日付'].isin(valid_buy_dates)]['買い金額'].sum()
             
-            # NaNを0に置換
-            analysis_df['買い金額'] = analysis_df['買い金額'].fillna(0)
-            analysis_df['売り金額'] = analysis_df['売り金額'].fillna(0)
-            analysis_df['買いシグナル'] = analysis_df['買いシグナル'].fillna(False)
-            analysis_df['売りシグナル'] = analysis_df['売りシグナル'].fillna(False)
-            
-            # シグナルに一致した取引の集計
-            matched_buys = analysis_df[analysis_df['買いシグナル']]['買い金額'].sum()
-            mismatched_buys = analysis_df[~analysis_df['買いシグナル']]['買い金額'].sum()
-            
-            matched_sells = analysis_df[analysis_df['売りシグナル']]['売り金額'].sum()
-            mismatched_sells = analysis_df[~analysis_df['売りシグナル']]['売り金額'].sum()
-            
-            # 一致率の計算
-            total_buys = matched_buys + mismatched_buys
-            total_sells = matched_sells + mismatched_sells
-            
-            buy_match_rate = (matched_buys / total_buys * 100) if total_buys > 0 else 0
-            sell_match_rate = (matched_sells / total_sells * 100) if total_sells > 0 else 0
-            overall_match_rate = ((matched_buys + matched_sells) / (total_buys + total_sells) * 100) if (total_buys + total_sells) > 0 else 0
+            matched_sells = merged_df[merged_df['日付'].isin(valid_sell_dates)]['売り金額'].sum()
+            mismatched_sells = merged_df[~merged_df['日付'].isin(valid_sell_dates)]['売り金額'].sum()
             
             # 結果表示
             col_signal1, col_signal2 = responsive_columns([1, 1])
@@ -440,6 +439,13 @@ if data is not None:
                 st.markdown("### シグナル一致率")
                 
                 # メトリクス表示
+                total_buys = matched_buys + mismatched_buys
+                total_sells = matched_sells + mismatched_sells
+                
+                buy_match_rate = (matched_buys / total_buys * 100) if total_buys > 0 else 0
+                sell_match_rate = (matched_sells / total_sells * 100) if total_sells > 0 else 0
+                overall_match_rate = ((matched_buys + matched_sells) / (total_buys + total_sells) * 100) if (total_buys + total_sells) > 0 else 0
+                
                 st.metric("買いシグナル一致率", f"{buy_match_rate:.1f}%", 
                          delta=f"{buy_match_rate - 50:.1f}%" if buy_match_rate != 50 else "中立")
                 
