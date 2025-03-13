@@ -639,6 +639,335 @@ if data is not None:
     else:
         st.warning("取引データの日付範囲が不明なため、日経平均との比較チャートを表示できません。")
 
+# RSIとMACDを計算するための関数
+def calculate_rsi(data, window=14):
+    delta = data.diff()
+    gain = delta.where(delta > 0, 0).rolling(window=window).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=window).mean()
+    
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_macd(data, fast=12, slow=26, signal=9):
+    # 移動平均の計算
+    ema_fast = data.ewm(span=fast, adjust=False).mean()
+    ema_slow = data.ewm(span=slow, adjust=False).mean()
+    
+    # MACDとシグナルラインの計算
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    
+    # ヒストグラムの計算
+    histogram = macd_line - signal_line
+    
+    return macd_line, signal_line, histogram
+
+# 技術指標の計算と分析を追加（移動平均分析の下に追加）
+# 既存の移動平均分析コードの後に以下を追加
+
+# RSIの計算
+nikkei_sorted['RSI'] = calculate_rsi(nikkei_sorted['Close'])
+
+# MACDの計算
+nikkei_sorted['MACD'], nikkei_sorted['Signal'], nikkei_sorted['Histogram'] = calculate_macd(nikkei_sorted['Close'])
+
+# 複合シグナルの生成
+# RSIによるシグナル（RSI<30で買い、RSI>70で売り）
+nikkei_sorted['RSI_買いシグナル'] = (nikkei_sorted['RSI'] < 30) & (nikkei_sorted['RSI'].shift(1) >= 30)
+nikkei_sorted['RSI_売りシグナル'] = (nikkei_sorted['RSI'] > 70) & (nikkei_sorted['RSI'].shift(1) <= 70)
+
+# MACDによるシグナル（MACDがシグナルラインを上抜けで買い、下抜けで売り）
+nikkei_sorted['MACD_買いシグナル'] = (nikkei_sorted['MACD'] > nikkei_sorted['Signal']) & (nikkei_sorted['MACD'].shift(1) <= nikkei_sorted['Signal'].shift(1))
+nikkei_sorted['MACD_売りシグナル'] = (nikkei_sorted['MACD'] < nikkei_sorted['Signal']) & (nikkei_sorted['MACD'].shift(1) >= nikkei_sorted['Signal'].shift(1))
+
+# 複合シグナル（少なくとも2つの指標が同時に買い/売りシグナルを出した場合）
+nikkei_sorted['強い買いシグナル'] = (
+    (nikkei_sorted['買いシグナル'] & nikkei_sorted['RSI_買いシグナル']) |
+    (nikkei_sorted['買いシグナル'] & nikkei_sorted['MACD_買いシグナル']) |
+    (nikkei_sorted['RSI_買いシグナル'] & nikkei_sorted['MACD_買いシグナル'])
+)
+
+nikkei_sorted['強い売りシグナル'] = (
+    (nikkei_sorted['売りシグナル'] & nikkei_sorted['RSI_売りシグナル']) |
+    (nikkei_sorted['売りシグナル'] & nikkei_sorted['MACD_売りシグナル']) |
+    (nikkei_sorted['RSI_売りシグナル'] & nikkei_sorted['MACD_売りシグナル'])
+)
+
+# RSIとMACDのチャートを表示
+st.subheader("RSIとMACD指標分析")
+
+# RSIチャート
+fig_rsi = go.Figure()
+
+# 日経平均（参照用）を2番目のY軸に表示
+fig_rsi.add_trace(go.Scatter(
+    x=nikkei_sorted.index, 
+    y=nikkei_sorted['Close'],
+    mode='lines',
+    name='日経平均',
+    line=dict(color='blue', width=1),
+    yaxis="y2"
+))
+
+# RSI
+fig_rsi.add_trace(go.Scatter(
+    x=nikkei_sorted.index, 
+    y=nikkei_sorted['RSI'],
+    mode='lines',
+    name='RSI (14)',
+    line=dict(color='purple', width=1.5)
+))
+
+# 買われすぎ・売られすぎのラインを追加
+fig_rsi.add_shape(
+    type="line", line=dict(color="red", width=1, dash="dash"),
+    y0=70, y1=70, x0=nikkei_sorted.index[0], x1=nikkei_sorted.index[-1]
+)
+
+fig_rsi.add_shape(
+    type="line", line=dict(color="green", width=1, dash="dash"),
+    y0=30, y1=30, x0=nikkei_sorted.index[0], x1=nikkei_sorted.index[-1]
+)
+
+# RSIによる買いシグナル
+rsi_buy_signals = nikkei_sorted[nikkei_sorted['RSI_買いシグナル']]
+if not rsi_buy_signals.empty:
+    fig_rsi.add_trace(go.Scatter(
+        x=rsi_buy_signals.index, 
+        y=rsi_buy_signals['RSI'],
+        mode='markers',
+        name='RSI買いシグナル',
+        marker=dict(symbol='triangle-up', size=10, color='green')
+    ))
+
+# RSIによる売りシグナル
+rsi_sell_signals = nikkei_sorted[nikkei_sorted['RSI_売りシグナル']]
+if not rsi_sell_signals.empty:
+    fig_rsi.add_trace(go.Scatter(
+        x=rsi_sell_signals.index, 
+        y=rsi_sell_signals['RSI'],
+        mode='markers',
+        name='RSI売りシグナル',
+        marker=dict(symbol='triangle-down', size=10, color='red')
+    ))
+
+# レイアウト設定
+fig_rsi.update_layout(
+    title='RSI分析（相対力指数）',
+    xaxis_title='日付',
+    yaxis_title='RSI',
+    height=400,
+    margin=dict(l=10, r=10, t=50, b=30),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+    yaxis=dict(
+        range=[0, 100],
+        tickvals=[0, 30, 50, 70, 100],
+    ),
+    yaxis2=dict(
+        title="日経平均株価",
+        overlaying="y",
+        side="right",
+        showgrid=False
+    )
+)
+
+# グラフ表示
+st.plotly_chart(fig_rsi, use_container_width=True)
+
+# MACDチャート
+fig_macd = go.Figure()
+
+# MACDライン
+fig_macd.add_trace(go.Scatter(
+    x=nikkei_sorted.index, 
+    y=nikkei_sorted['MACD'],
+    mode='lines',
+    name='MACD (12, 26)',
+    line=dict(color='blue', width=1.5)
+))
+
+# シグナルライン
+fig_macd.add_trace(go.Scatter(
+    x=nikkei_sorted.index, 
+    y=nikkei_sorted['Signal'],
+    mode='lines',
+    name='Signal (9)',
+    line=dict(color='red', width=1)
+))
+
+# ヒストグラム
+colors = ['green' if h >= 0 else 'red' for h in nikkei_sorted['Histogram']]
+fig_macd.add_trace(go.Bar(
+    x=nikkei_sorted.index,
+    y=nikkei_sorted['Histogram'],
+    name='Histogram',
+    marker_color=colors
+))
+
+# MACDによる買いシグナル
+macd_buy_signals = nikkei_sorted[nikkei_sorted['MACD_買いシグナル']]
+if not macd_buy_signals.empty:
+    fig_macd.add_trace(go.Scatter(
+        x=macd_buy_signals.index, 
+        y=macd_buy_signals['MACD'],
+        mode='markers',
+        name='MACD買いシグナル',
+        marker=dict(symbol='triangle-up', size=10, color='green')
+    ))
+
+# MACDによる売りシグナル
+macd_sell_signals = nikkei_sorted[nikkei_sorted['MACD_売りシグナル']]
+if not macd_sell_signals.empty:
+    fig_macd.add_trace(go.Scatter(
+        x=macd_sell_signals.index, 
+        y=macd_sell_signals['MACD'],
+        mode='markers',
+        name='MACD売りシグナル',
+        marker=dict(symbol='triangle-down', size=10, color='red')
+    ))
+
+# レイアウト設定
+fig_macd.update_layout(
+    title='MACD分析（移動平均収束拡散法）',
+    xaxis_title='日付',
+    yaxis_title='MACD',
+    height=400,
+    margin=dict(l=10, r=10, t=50, b=30),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+)
+
+# グラフ表示
+st.plotly_chart(fig_macd, use_container_width=True)
+
+# 複合シグナル分析
+st.subheader("複合テクニカル指標による売買シグナル")
+
+# 複合シグナルを含む日経平均チャート
+fig_composite = go.Figure()
+
+# 日経平均終値
+fig_composite.add_trace(go.Scatter(
+    x=nikkei_sorted.index, 
+    y=nikkei_sorted['Close'],
+    mode='lines',
+    name='日経平均',
+    line=dict(color='blue', width=1)
+))
+
+# 強い買いシグナル
+strong_buy_signals = nikkei_sorted[nikkei_sorted['強い買いシグナル']]
+if not strong_buy_signals.empty:
+    fig_composite.add_trace(go.Scatter(
+        x=strong_buy_signals.index, 
+        y=strong_buy_signals['Close'],
+        mode='markers',
+        name='強い買いシグナル',
+        marker=dict(symbol='triangle-up', size=14, color='green', line=dict(width=2, color='white'))
+    ))
+
+# 強い売りシグナル
+strong_sell_signals = nikkei_sorted[nikkei_sorted['強い売りシグナル']]
+if not strong_sell_signals.empty:
+    fig_composite.add_trace(go.Scatter(
+        x=strong_sell_signals.index, 
+        y=strong_sell_signals['Close'],
+        mode='markers',
+        name='強い売りシグナル',
+        marker=dict(symbol='triangle-down', size=14, color='red', line=dict(width=2, color='white'))
+    ))
+
+# レイアウト設定
+fig_composite.update_layout(
+    title='複合テクニカル指標による売買シグナル',
+    xaxis_title='日付',
+    yaxis_title='価格',
+    height=500,
+    margin=dict(l=10, r=10, t=50, b=30),
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+)
+
+# グラフ表示
+st.plotly_chart(fig_composite, use_container_width=True)
+
+# 複合シグナルと実際の取引の一致度分析
+st.subheader("複合シグナルと実際の取引一致度")
+
+# 複合シグナル分析用のデータ準備
+composite_df = nikkei_sorted[['強い買いシグナル', '強い売りシグナル']].reset_index()
+composite_df.columns = ['日付', '強い買いシグナル', '強い売りシグナル']
+
+# 各シグナル発生日の前後n日も有効期間とみなす
+strong_buy_dates = composite_df[composite_df['強い買いシグナル']]['日付'].tolist()
+strong_sell_dates = composite_df[composite_df['強い売りシグナル']]['日付'].tolist()
+
+# 有効期間のデータフレーム生成
+valid_strong_buy_dates = []
+valid_strong_sell_dates = []
+
+for date in strong_buy_dates:
+    for i in range(-signal_window, signal_window+1):
+        valid_date = date + pd.Timedelta(days=i)
+        valid_strong_buy_dates.append(valid_date)
+
+for date in strong_sell_dates:
+    for i in range(-signal_window, signal_window+1):
+        valid_date = date + pd.Timedelta(days=i)
+        valid_strong_sell_dates.append(valid_date)
+
+# 拡張シグナル期間内の取引を集計
+strong_matched_buys = merged_df[merged_df['日付'].isin(valid_strong_buy_dates)]['買い金額'].sum()
+strong_mismatched_buys = merged_df[~merged_df['日付'].isin(valid_strong_buy_dates)]['買い金額'].sum()
+
+strong_matched_sells = merged_df[merged_df['日付'].isin(valid_strong_sell_dates)]['売り金額'].sum()
+strong_mismatched_sells = merged_df[~merged_df['日付'].isin(valid_strong_sell_dates)]['売り金額'].sum()
+
+# 結果表示
+col_strong1, col_strong2 = responsive_columns([1, 1])
+
+with col_strong1:
+    st.markdown("### 複合シグナル一致率")
+    
+    # メトリクス表示
+    total_buys = strong_matched_buys + strong_mismatched_buys
+    total_sells = strong_matched_sells + strong_mismatched_sells
+    
+    strong_buy_match_rate = (strong_matched_buys / total_buys * 100) if total_buys > 0 else 0
+    strong_sell_match_rate = (strong_matched_sells / total_sells * 100) if total_sells > 0 else 0
+    strong_overall_match_rate = ((strong_matched_buys + strong_matched_sells) / (total_buys + total_sells) * 100) if (total_buys + total_sells) > 0 else 0
+    
+    st.metric("複合買いシグナル一致率", f"{strong_buy_match_rate:.1f}%", 
+             delta=f"{strong_buy_match_rate - 50:.1f}%" if strong_buy_match_rate != 50 else "中立")
+    
+    st.metric("複合売りシグナル一致率", f"{strong_sell_match_rate:.1f}%", 
+             delta=f"{strong_sell_match_rate - 50:.1f}%" if strong_sell_match_rate != 50 else "中立")
+    
+    st.metric("複合総合シグナル一致率", f"{strong_overall_match_rate:.1f}%", 
+             delta=f"{strong_overall_match_rate - 50:.1f}%" if strong_overall_match_rate != 50 else "中立")
+
+with col_strong2:
+    st.markdown("### 複合シグナル評価")
+    
+    # 買いシグナル評価
+    if strong_buy_match_rate > 70:
+        st.success("✅ **複合買いシグナル**: 非常に優れたタイミング！複数の指標が示す好機を上手く活用できています。")
+    elif strong_buy_match_rate > 50:
+        st.info("ℹ️ **複合買いシグナル**: 良好です。複数指標のシグナルに基づいた買い行動が見られます。")
+    elif strong_buy_match_rate > 30:
+        st.warning("⚠️ **複合買いシグナル**: 改善の余地があります。複数の指標が示す買い時を十分に活かせていません。")
+    else:
+        st.error("❌ **複合買いシグナル**: 要改善。複数指標が示す買い時とは逆のタイミングで行動している可能性があります。")
+    
+    # 売りシグナル評価
+    if strong_sell_match_rate > 70:
+        st.success("✅ **複合売りシグナル**: 非常に優れたタイミング！複数の指標が示す好機を上手く活用できています。")
+    elif strong_sell_match_rate > 50:
+        st.info("ℹ️ **複合売りシグナル**: 良好です。複数指標のシグナルに基づいた売り行動が見られます。")
+    elif strong_sell_match_rate > 30:
+        st.warning("⚠️ **複合売りシグナル**: 改善の余地があります。複数の指標が示す売り時を十分に活かせていません。")
+    else:
+        st.error("❌ **複合売りシグナル**: 要改善。複数指標が示す売り時とは逆のタイミングで行動している可能性があります。")
+
 # アプリ起動方法を表示
 st.sidebar.markdown("""
 ---
